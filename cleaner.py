@@ -2,14 +2,53 @@ import os
 import shutil
 import logging
 import math
+import json
+from datetime import datetime
 
-# Logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s: %(message)s',
-    filename='cleaner.log',
-    filemode='a'
-)
+HISTORY_FILE = "history.json"
+LOG_FILE = "cleaner.log"
+
+def setup_logging():
+    """Configures logging with the current LOG_FILE path"""
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+        
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s: %(message)s',
+        filename=LOG_FILE,
+        filemode='a'
+    )
+
+def log_history(items, size_freed):
+    """
+    Saves the cleaning operation results to a history JSON file.
+    """
+    setup_logging() # Ensure logging is ready
+    new_entry = {
+        "date": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "items": items,
+        "size": format_size(size_freed)
+    }
+    
+    history = []
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                history = json.load(f)
+        except Exception as e:
+            logging.error(f"Error reading history file: {e}")
+            history = []
+    
+    history.insert(0, new_entry)
+    # Keep only the last 50 entries
+    history = history[:50]
+    
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(history, f, indent=4)
+    except Exception as e:
+        logging.error(f"Error writing to history file: {e}")
 
 def get_folder_size(folder_path):
     """
@@ -31,6 +70,7 @@ def clean_folder(folder_path):
     Tries to delete all files and subdirectories within the given folder path.
     Returns (success_count, fail_count, total_size_freed_bytes, errors)
     """
+    setup_logging() # Ensure logging is ready
     success_count = 0
     fail_count = 0
     total_size_freed = 0

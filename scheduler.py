@@ -30,13 +30,24 @@ def set_manual_mode():
     """
     remove_all_tasks()
 
+def get_command_and_args(exe_path):
+    """
+    Returns (command, arguments) based on whether running from script or exe.
+    """
+    if exe_path.lower().endswith("python.exe") or exe_path.lower().endswith("pythonw.exe"):
+        script_path = os.path.abspath(sys.argv[0])
+        return f'"{exe_path}"', f'"{script_path}" --silent'
+    else:
+        return f'"{exe_path}"', "--silent"
+
 def set_logon_mode(exe_path):
     """
     Configures a task to run whenever the user logs in.
     """
     remove_all_tasks()
+    cmd_exe, cmd_args = get_command_and_args(exe_path)
     cmd = ["schtasks", "/create", "/tn", f"{TASK_NAME_PREFIX}OnLogon", 
-           "/tr", f'"{exe_path}" --silent', "/sc", "ONLOGON", "/rl", "HIGHEST", "/f"]
+           "/tr", f'{cmd_exe} {cmd_args}', "/sc", "ONLOGON", "/rl", "HIGHEST", "/f"]
     return run_command(cmd)
 
 def set_interval_mode(exe_path, minutes):
@@ -44,8 +55,9 @@ def set_interval_mode(exe_path, minutes):
     Configures a task to run every X minutes.
     """
     remove_all_tasks()
+    cmd_exe, cmd_args = get_command_and_args(exe_path)
     cmd = ["schtasks", "/create", "/tn", f"{TASK_NAME_PREFIX}Interval", 
-           "/tr", f'"{exe_path}" --silent', "/sc", "MINUTE", "/mo", str(minutes), "/rl", "HIGHEST", "/f"]
+           "/tr", f'{cmd_exe} {cmd_args}', "/sc", "MINUTE", "/mo", str(minutes), "/rl", "HIGHEST", "/f"]
     return run_command(cmd)
 
 def set_shutdown_mode(exe_path):
@@ -53,6 +65,7 @@ def set_shutdown_mode(exe_path):
     Configures a task to run when a system shutdown event is detected.
     """
     remove_all_tasks()
+    cmd_exe, cmd_args = get_command_and_args(exe_path)
     
     current_date = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     
@@ -95,8 +108,8 @@ def set_shutdown_mode(exe_path):
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>"{exe_path}"</Command>
-      <Arguments>--silent</Arguments>
+      <Command>{cmd_exe}</Command>
+      <Arguments>{cmd_args}</Arguments>
     </Exec>
   </Actions>
 </Task>

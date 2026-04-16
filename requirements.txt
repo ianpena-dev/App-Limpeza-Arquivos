@@ -2,3 +2,4 @@ customtkinter
 pyinstaller
 darkdetect
 Pillow
+pystray
