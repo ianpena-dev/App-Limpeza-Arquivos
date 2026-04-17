@@ -3,6 +3,7 @@ import shutil
 import logging
 import math
 import json
+import ctypes
 from datetime import datetime
 
 HISTORY_FILE = "history.json"
@@ -19,6 +20,19 @@ def setup_logging():
         filename=LOG_FILE,
         filemode='a'
     )
+
+def empty_recycle_bin():
+    """Empties the Windows Recycle Bin silently"""
+    setup_logging()
+    try:
+        # 7 = SHERB_NOCONFIRMATION (1) | SHERB_NOPROGRESSUI (2) | SHERB_NOSOUND (4)
+        result = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 7)
+        if result == 0:
+            logging.info("Lixeira esvaziada com sucesso.")
+            return True
+    except Exception as e:
+        logging.error(f"Erro ao esvaziar a lixeira: {e}")
+    return False
 
 def log_history(items, size_freed):
     """
