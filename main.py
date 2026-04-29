@@ -39,6 +39,11 @@ HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 # Atualiza os caminhos no módulo cleaner também
 cleaner.HISTORY_FILE = HISTORY_FILE
 cleaner.LOG_FILE = os.path.join(DATA_DIR, "cleaner.log")
+cleaner.QUARANTINE_DIR = os.path.join(DATA_DIR, "Quarantine")
+cleaner.QUARANTINE_FILE = os.path.join(DATA_DIR, "quarantine.json")
+
+# Processa autodelete da quarentena ao iniciar
+threading.Thread(target=cleaner.process_quarantine_auto_delete, daemon=True).start()
 
 # Setup appearance
 ctk.set_appearance_mode("Dark")
@@ -78,6 +83,7 @@ class App(ctk.CTk):
         self.folders = config_data.get("folders", [])
         self.schedule_type = config_data.get("schedule_type", "Manual")
         self.schedule_interval = config_data.get("schedule_interval", 60)
+        self.schedule_unit = config_data.get("schedule_unit", "Minutos")
         
         # Força Modo Dark permanente
         ctk.set_appearance_mode("Dark")
@@ -232,6 +238,7 @@ class App(ctk.CTk):
         self.tabview.grid(row=1, column=0, padx=30, pady=(0, 30), sticky="nsew")
         
         self.tab_control = self.tabview.add("Limpeza")
+        self.tab_quarantine = self.tabview.add("Storage")
         self.tab_history = self.tabview.add("Histórico")
         
         # Scrollable container
@@ -240,7 +247,159 @@ class App(ctk.CTk):
         
         self._setup_folder_management(self.scroll_control)
         self._setup_automation(self.scroll_control)
+        self._setup_quarantine_tab(self.tab_quarantine)
         self._setup_history_tab(self.tab_history)
+
+    def _setup_quarantine_tab(self, parent):
+        """Setup the quarantine display tab (Storage)"""
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=(10, 0))
+        
+        ctk.CTkLabel(header, text="Itens no Storage", font=ctk.CTkFont(size=18, weight="bold"), text_color=("#111111", "#FFFFFF")).pack(side="left", padx=20, pady=15)
+        
+        ctk.CTkLabel(header, text="(Excluídos após 30 dias)", font=ctk.CTkFont(size=11), text_color="#888888").pack(side="left")
+
+        # Container para busca e botões de ação à direita
+        actions_right = ctk.CTkFrame(header, fg_color="transparent")
+        actions_right.pack(side="right", padx=20)
+
+        self.search_var = ctk.StringVar()
+        self.search_entry = ctk.CTkEntry(
+            actions_right, placeholder_text="Buscar...", textvariable=self.search_var, width=120, height=32
+        )
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_quarantine(self.search_var.get()))
+
+        self.refresh_quarantine_btn = ctk.CTkButton(
+            actions_right, text="🔄", width=40, height=32, corner_radius=8,
+            fg_color="#0078D7", hover_color="#005A9E", text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            command=self.refresh_quarantine
+        )
+        self.refresh_quarantine_btn.pack(side="left", padx=5)
+
+        self.clear_all_quarantine_btn = ctk.CTkButton(
+            actions_right, text="🗑️", width=40, height=32, corner_radius=8,
+            fg_color="#dc3545", hover_color="#c82333", text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            command=self.clear_all_storage
+        )
+        self.clear_all_quarantine_btn.pack(side="left", padx=5)
+
+        self.quarantine_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        self.quarantine_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.refresh_quarantine()
+
+    def clear_all_storage(self):
+        """Permanently deletes ALL items from storage after confirmation"""
+        if not os.path.exists(cleaner.QUARANTINE_FILE):
+            return
+            
+        try:
+            with open(cleaner.QUARANTINE_FILE, "r") as f:
+                data = json.load(f)
+            
+            if not data:
+                messagebox.showinfo("Storage", "O storage já está vazio.")
+                return
+                
+            if messagebox.askyesno("Confirmar", f"Deseja realmente apagar TODOS os {len(data)} itens do storage permanentemente?"):
+                success_count = 0
+                for item in data[:]: # Iterate over a copy
+                    success, _ = cleaner.delete_permanently(item['id'])
+                    if success:
+                        success_count += 1
+                
+                self.refresh_quarantine()
+                messagebox.showinfo("Storage", f"Operação concluída. {success_count} itens foram removidos.")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha ao esvaziar storage: {e}")
+
+    def refresh_quarantine(self, search_query=None):
+        """Reload and display items in Storage"""
+        # Se chamado via botão de refresh, pegar o valor atual da busca
+        if search_query is None or isinstance(search_query, bool):
+            search_query = self.search_var.get()
+
+        for widget in self.quarantine_frame.winfo_children():
+            widget.destroy()
+            
+        if not os.path.exists(cleaner.QUARANTINE_FILE):
+            ctk.CTkLabel(self.quarantine_frame, text="Nenhum item no storage.", text_color=("#777777", "#555555"), font=ctk.CTkFont(size=14)).pack(pady=60)
+            return
+            
+        try:
+            with open(cleaner.QUARANTINE_FILE, "r") as f:
+                data = json.load(f)
+                
+            if search_query:
+                data = [item for item in data if search_query.lower() in item['original_name'].lower() or search_query.lower() in item['original_path'].lower()]
+                
+            if not data:
+                text_msg = "Nenhum resultado encontrado." if search_query else "O storage está vazio."
+                ctk.CTkLabel(self.quarantine_frame, text=text_msg, text_color=("#777777", "#555555"), font=ctk.CTkFont(size=14)).pack(pady=60)
+                return
+                
+            for item in reversed(data):
+                card = ctk.CTkFrame(self.quarantine_frame, fg_color=("#FFFFFF", "#151515"), corner_radius=12, border_width=1, border_color=("#CCCCCC", "#252525"))
+                card.pack(fill="x", padx=10, pady=6)
+                
+                content = ctk.CTkFrame(card, fg_color="transparent")
+                content.pack(fill="x", padx=20, pady=12)
+                
+                info_frame = ctk.CTkFrame(content, fg_color="transparent")
+                info_frame.pack(side="left", fill="both", expand=True)
+                
+                name_label = ctk.CTkLabel(info_frame, text=item['original_name'], font=ctk.CTkFont(size=14, weight="bold"), text_color=("#111111", "#FFFFFF"))
+                name_label.pack(anchor="w")
+                
+                path_label = ctk.CTkLabel(info_frame, text=item['original_path'], font=ctk.CTkFont(size=11), text_color="#888888")
+                path_label.pack(anchor="w")
+                
+                meta_label = ctk.CTkLabel(info_frame, text=f"Data: {item['quarantine_date']} | Tamanho: {format_size(item['size'])}", font=ctk.CTkFont(size=11), text_color="#00D2FF")
+                meta_label.pack(anchor="w")
+                
+                btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+                btn_frame.pack(side="right")
+                
+                restore_btn = ctk.CTkButton(
+                    btn_frame, text="Restaurar", width=80, height=28, corner_radius=6,
+                    fg_color="#28a745", hover_color="#218838", text_color="#FFFFFF",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    command=lambda i=item['id']: self.restore_item(i)
+                )
+                restore_btn.pack(pady=2)
+                
+                delete_btn = ctk.CTkButton(
+                    btn_frame, text="Excluir", width=80, height=28, corner_radius=6,
+                    fg_color="#dc3545", hover_color="#c82333", text_color="#FFFFFF",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    command=lambda i=item['id']: self.delete_item_permanent(i)
+                )
+                delete_btn.pack(pady=2)
+                
+        except Exception as e:
+            logging.error(f"Error refreshing storage: {e}")
+
+    def restore_item(self, item_id):
+        """Restores a quarantined item"""
+        success, msg = cleaner.restore_from_quarantine(item_id)
+        if success:
+            self.refresh_quarantine()
+            self.status_label.configure(text="Item Restaurado")
+        else:
+            messagebox.showerror("Erro", f"Não foi possível restaurar: {msg}")
+
+    def delete_item_permanent(self, item_id):
+        """Permanently deletes a quarantined item"""
+        if messagebox.askyesno("Confirmar", "Deseja excluir este item permanentemente?"):
+            success, msg = cleaner.delete_permanently(item_id)
+            if success:
+                self.refresh_quarantine()
+                self.status_label.configure(text="Item Excluído")
+            else:
+                messagebox.showerror("Erro", f"Não foi possível excluir: {msg}")
+
 
     def _setup_folder_management(self, parent):
         """Setup the folder management section with a modern clean look"""
@@ -299,7 +458,7 @@ class App(ctk.CTk):
         interval_box = ctk.CTkFrame(options, fg_color="transparent")
         interval_box.grid(row=1, column=1, padx=10, pady=10, sticky="w")
         
-        ctk.CTkRadioButton(interval_box, text="Intervalo (min):", value="Interval", **radio_params).pack(side="left")
+        ctk.CTkRadioButton(interval_box, text="Intervalo:", value="Interval", **radio_params).pack(side="left")
         
         self.interval_entry = ctk.CTkEntry(
             interval_box, width=60, height=28, corner_radius=6,
@@ -307,6 +466,16 @@ class App(ctk.CTk):
         )
         self.interval_entry.insert(0, str(self.schedule_interval))
         self.interval_entry.pack(side="left", padx=10)
+        self.interval_entry.bind("<Return>", lambda e: self.update_schedule())
+
+        self.unit_var = ctk.StringVar(value=self.schedule_unit)
+        self.unit_combo = ctk.CTkComboBox(
+            interval_box, width=100, height=28, corner_radius=6,
+            values=["Minutos", "Horas", "Dias"],
+            variable=self.unit_var,
+            fg_color=("#FFFFFF", "#0D0D0D"), border_color=("#CCCCCC", "#333333"), text_color=("#000000", "#FFFFFF")
+        )
+        self.unit_combo.pack(side="left", padx=2)
 
         self.apply_button = ctk.CTkButton(
             self.schedule_card, text="SALVAR E APLICAR CONFIGURAÇÕES", 
@@ -330,7 +499,15 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self.clear_history
         )
-        self.clear_history_btn.pack(side="right", padx=20)
+        self.clear_history_btn.pack(side="right", padx=(10, 20))
+
+        self.refresh_history_btn = ctk.CTkButton(
+            header, text="🔄", width=40, height=32, corner_radius=8,
+            fg_color="#0078D7", hover_color="#005A9E", text_color="#FFFFFF",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            command=self.refresh_history
+        )
+        self.refresh_history_btn.pack(side="right", padx=10)
 
         self.history_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         self.history_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -405,7 +582,8 @@ class App(ctk.CTk):
             config = {
                 "folders": self.folders,
                 "schedule_type": self.sched_var.get(),
-                "schedule_interval": int(self.interval_entry.get() if self.interval_entry.get().isdigit() else 60)
+                "schedule_interval": int(self.interval_entry.get() if self.interval_entry.get().isdigit() else 60),
+                "schedule_unit": self.unit_var.get()
             }
             with open(CONFIG_FILE, "w") as f:
                 json.dump(config, f, indent=4)
@@ -471,10 +649,16 @@ class App(ctk.CTk):
                 msg = "O ClearFiles será executado ao desligar o computador."
             elif mode == "Interval":
                 val = self.interval_entry.get()
+                unit = self.unit_var.get()
                 interval = int(val) if val.isdigit() else 60
-                scheduler.set_interval_mode(exe_path, interval)
-                self.status_label.configure(text=f"Agendado: {interval}m", text_color="#0078d7")
-                msg = f"O ClearFiles será executado a cada {interval} minutos."
+                scheduler.set_interval_mode(exe_path, interval, unit)
+                
+                unit_display = unit[0].lower() # m, h, d
+                self.status_label.configure(text=f"Agendado: {interval}{unit_display}", text_color="#0078d7")
+                msg = f"O ClearFiles será executado a cada {interval} {unit.lower()}."
+            
+            # Remove focus from entry to hide blinking cursor
+            self.focus()
             
             messagebox.showinfo("Configuração Aplicada", f"{msg}\n\nO aplicativo continuará funcionando em segundo plano na bandeja do sistema.")
         except Exception as e:
@@ -555,7 +739,19 @@ def check_single_instance():
     # Keep the mutex reference alive
     return mutex
 
+def check_admin():
+    """Checks if the user has administrative privileges"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def run_as_admin():
+    """Relaunches the script with administrator privileges"""
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+
 if __name__ == "__main__":
+    # Admin check removed temporarily as requested
     if "--silent" in sys.argv:
         silent_clean()
     else:

@@ -50,14 +50,25 @@ def set_logon_mode(exe_path):
            "/tr", f'{cmd_exe} {cmd_args}', "/sc", "ONLOGON", "/rl", "HIGHEST", "/f"]
     return run_command(cmd)
 
-def set_interval_mode(exe_path, minutes):
+def set_interval_mode(exe_path, value, unit="MINUTE"):
     """
-    Configures a task to run every X minutes.
+    Configures a task to run every X (minutes, hours, or days).
+    unit should be one of: "MINUTE", "HOURLY", "DAILY"
     """
     remove_all_tasks()
     cmd_exe, cmd_args = get_command_and_args(exe_path)
+    
+    # Mapping friendly names to schtasks /sc values
+    sc_mapping = {
+        "Minutos": "MINUTE",
+        "Horas": "HOURLY",
+        "Dias": "DAILY"
+    }
+    
+    sc_value = sc_mapping.get(unit, "MINUTE")
+    
     cmd = ["schtasks", "/create", "/tn", f"{TASK_NAME_PREFIX}Interval", 
-           "/tr", f'{cmd_exe} {cmd_args}', "/sc", "MINUTE", "/mo", str(minutes), "/rl", "HIGHEST", "/f"]
+           "/tr", f'{cmd_exe} {cmd_args}', "/sc", sc_value, "/mo", str(value), "/rl", "HIGHEST", "/f"]
     return run_command(cmd)
 
 def set_shutdown_mode(exe_path):

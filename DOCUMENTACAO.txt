@@ -1,0 +1,128 @@
+================================================================================
+DOCUMENTAÇÃO DETALHADA - CLEARFILES PROFESSIONAL
+================================================================================
+
+1. VISÃO GERAL DO APLICATIVO
+--------------------------------------------------------------------------------
+O "ClearFiles" é uma ferramenta automatizada desenvolvida em Python 
+focada em liberar espaço em disco. Ele não exclui os arquivos permanentemente 
+logo de cara; em vez disso, ele move os itens para uma "Quarentena" (Storage), 
+onde ficam guardados por 30 dias. Se o usuário não restaurá-los nesse período, 
+eles são excluídos definitivamente.
+
+O aplicativo também conta com automações usando o Agendador de Tarefas do 
+Windows (Task Scheduler), permitindo limpezas:
+- Manuais (ao clicar no botão)
+- Ao iniciar o Windows (Logon)
+- Ao desligar o computador (Shutdown)
+- Em intervalos definidos (ex: a cada 1 hora)
+
+--------------------------------------------------------------------------------
+2. RESPOSTA À SUA DÚVIDA SOBRE REDE E PENDRIVES
+--------------------------------------------------------------------------------
+Você perguntou: "ele só remove os dados que eu escolher ou ele exclui também 
+dados que tiverem ligado a rede?"
+
+Resposta: O aplicativo exclui APENAS o que estiver dentro das pastas que VOCÊ 
+adicionar na lista da aba "Limpeza". 
+- Se você adicionar apenas a pasta "C:\Users\Downloads", ele vai limpar só lá.
+- Se você adicionar um caminho de rede (Ex: "\\Servidor\Arquivos" ou mapeado 
+  como "Z:\"), o aplicativo VAI tentar limpar esses arquivos da rede também.
+- Ele não procura arquivos na rede automaticamente, ele obedece estritamente 
+  à lista de pastas configurada.
+
+--------------------------------------------------------------------------------
+3. SOBRE A PERFORMANCE (DEIXAR MAIS LEVE)
+--------------------------------------------------------------------------------
+A aplicação já foi projetada para ser leve na interface (UI). Quando você clica 
+em "Limpar Agora", a limpeza ocorre em uma "Thread" (segundo plano). Isso 
+significa que o aplicativo não congela ou trava enquanto dezenas de gigabytes 
+estão sendo movidos.
+
+Código que garante que o App seja leve (main.py):
+```python
+def start_cleaning_thread(self):
+    # Inicia a limpeza em segundo plano para não travar a interface (leveza)
+    thread = threading.Thread(target=self.run_cleaning)
+    thread.daemon = True
+    thread.start()
+```
+O uso da biblioteca "os.scandir" no arquivo `cleaner.py` também foi escolhido 
+justamente por ser a forma mais rápida e leve do Python para ler milhares de 
+arquivos de uma vez.
+
+--------------------------------------------------------------------------------
+4. O QUE FOI INSTALADO E USADO (TECNOLOGIAS)
+--------------------------------------------------------------------------------
+O projeto usa as seguintes bibliotecas (presentes no requirements.txt):
+
+- **customtkinter**: Substitui o Tkinter padrão do Python. Ele é o responsável 
+  por dar essa cara "Moderna", botões arredondados e modo escuro nativo para 
+  o aplicativo.
+- **Pillow (PIL)**: Usado para carregar e processar a logo ("logo.png") e o 
+  ícone ("icon.ico") na interface e na bandeja do sistema (perto do relógio).
+- **pystray**: Responsável por criar o ícone da aplicação lá perto do relógio 
+  do Windows (System Tray). Permite rodar oculto.
+- **pyinstaller**: Ferramenta essencial para transformar os arquivos `.py` em 
+  um arquivo `.exe` único que roda sem precisar de Python instalado no PC.
+- **darkdetect**: Detecta se o Windows do usuário está no modo claro ou escuro 
+  para tentar adaptar a janela.
+
+Bibliotecas nativas do Python usadas (não precisam instalar):
+- **os, shutil, json**: Para manipulação e exclusão de arquivos e salvar configs.
+- **threading**: Para rodar tarefas pesadas sem travar a interface.
+- **ctypes**: Para interagir diretamente com a API do Windows (ex: esvaziar 
+  a lixeira do Windows silenciosamente e forçar bordas escuras).
+
+--------------------------------------------------------------------------------
+5. CÓDIGOS IMPORTANTES DO APLICATIVO
+--------------------------------------------------------------------------------
+
+A) Esvaziamento Oculto da Lixeira do Windows (`cleaner.py`):
+```python
+def empty_recycle_bin():
+    # Usa a API do Windows para esvaziar a lixeira sem fazer barulho ou pop-up
+    result = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 7)
+    return True se der sucesso
+```
+
+B) O Sistema de Quarentena (`cleaner.py`):
+Quando um arquivo é lido, ele é renomeado para um ID único e seus dados reais 
+são salvos em um `quarantine.json` escondido no `%APPDATA%/ClearFiles`.
+```python
+unique_id = str(uuid.uuid4()) # Gera um ID (ex: 550e8400-e29b...)
+shutil.move(item_path, quarantine_path) # Move pro storage
+
+metadata = { # Salva de onde veio para poder restaurar depois
+    "id": unique_id,
+    "original_name": item_name,
+    "original_path": item_path,
+    "size": size
+}
+```
+
+C) A Criação dos Agendamentos no Windows (`scheduler.py`):
+O ClearFiles usa comandos do `schtasks` do CMD do Windows para injetar a 
+automação no sistema.
+```python
+cmd = ["schtasks", "/create", "/tn", "ClearFiles_Interval", 
+       "/tr", f'"{exe_path}" --silent', "/sc", "MINUTE", "/mo", "60"]
+```
+Nota: O argumento `--silent` faz o aplicativo abrir, limpar os arquivos e 
+fechar imediatamente, sem mostrar NENHUMA janela para o usuário.
+
+--------------------------------------------------------------------------------
+6. ATUALIZAÇÕES RECENTES (O QUE FOI ALTERADO)
+--------------------------------------------------------------------------------
+- **Barra de Pesquisa no Storage**: Adicionei um campo de busca ("Buscar arquivo...") 
+  na aba Storage. Conforme você digita, a função `refresh_quarantine()` no 
+  `main.py` filtra os arquivos pelo nome original ou pelo caminho de onde eles 
+  vieram.
+- **Builds**: Como o código modificado fica nos arquivos base `.py`, 
+  qualquer script de compilação (seja o `build.bat` ou rodar PyInstaller no 
+  `ClearFiles.spec` ou `ClearFiles_New.spec`) compilará a versão mais recente 
+  contendo essas otimizações e a nova barra de pesquisa.
+
+================================================================================
+FIM DA DOCUMENTAÇÃO
+================================================================================
